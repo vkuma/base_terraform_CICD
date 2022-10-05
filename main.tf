@@ -48,7 +48,7 @@ data "aws_iam_policy_document" "allow_access_from_another_account" {
 resource "aws_s3_bucket_object" "app-jar" {
   bucket = "cttc-tf-app-jar-bucket"
   key    = "cttc-0.0.1-SNAPSHOT.jar"
-  source = "/builds/cicd2022-09/dave.-schick/CTTC_PIPELINE/target/cttc-0.0.1-SNAPSHOT.jar"
+  source = "/builds/cicd2022-09/dave-schick/CTTC_PIPELINE/target/cttc-0.0.1-SNAPSHOT.jar"
   depends_on = [
     aws_s3_bucket.aws-bucket-1
   ]
