@@ -53,9 +53,11 @@ test2:
 build:
   image: maven:3.8-openjdk-11
   stage: mvn-build
-  script:
+  script:   
     - echo "Running mvn clean install and skipping tests - will create the spring boot jar deployable"
     - mvn clean install -DskipTests=true
+    - echo "here's where the snapshot jar is located:"
+    - pwd
   artifacts:
     paths:
       - target/*.jar
