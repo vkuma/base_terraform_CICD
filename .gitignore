@@ -1,3 +1,5 @@
+**/target/*
+
 # Local .terraform directories
 **/.terraform/*
 
