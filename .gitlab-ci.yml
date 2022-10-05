@@ -12,7 +12,7 @@ cache:
   paths:
     - .terraform
 
-#Define the stages that will run in order
+#Define the stages that will run in order for mvn and terraform
 stages:
   - mvn-test
   - mvn-build
