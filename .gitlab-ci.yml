@@ -1,0 +1,126 @@
+
+# You should not add this template to an existing `.gitlab-ci.yml` file by using the `include:` keyword.
+#
+# To contribute improvements to CI/CD templates, please follow the Development guide at:
+# https://docs.gitlab.com/ee/development/cicd/templates.html
+# This specific template is located at:
+# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Bash.gitlab-ci.yml
+
+# See https://docs.gitlab.com/ee/ci/yaml/index.html for all available options
+
+# you can delete this line if you're not using Docker
+image:
+  name: hashicorp/terraform:light
+  entrypoint:
+    - '/usr/bin/env'
+    - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+
+variables:
+  TF_ROOT: ${CI_PROJECT_DIR}  # The relative path to the root directory of the Terraform project
+
+cache:
+  key: "${TF_ROOT}"
+  paths:
+    - ${TF_ROOT}/.terraform/
+
+
+stages:
+  - test
+  - build
+  - initialize
+  - validate
+  - plan
+  - deploy
+  - cleanup
+
+before_script: 
+  - echo "Executing before_script"
+  - export AWS_ACCESS_KEY=${AWS_ACCESS_KEY_ID}
+  - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}  
+    
+after_script:
+  - echo "Executing after_script"
+
+build:
+  image: maven:3.8-openjdk-11
+  stage: build
+  script:
+      - mvn clean install -DskipTests=true
+  artifacts:
+    paths:
+      - target/*.jar
+
+test1:
+  image: maven:3.8-openjdk-11  
+  stage: test
+  script:
+      - echo "This is an individual test that will also run in the build step. Only added to test stage for purposes of the class"
+      - mvn test -Dtest=HelloWorldControllerTest
+  artifacts:
+    paths:
+      - target
+
+test2:
+  image: maven:3.8-openjdk-11  
+  stage: test
+  script:
+    - echo "Do another parallel test here"
+    - echo "For example run a lint test"
+
+initialize:
+  stage: initialize
+  script:
+    - rm -rf .terraform
+    - terraform --version
+    - terraform init
+  artifacts:
+    when: always
+    paths:
+      - .terraform.lock.hcl
+      - ${TF_ROOT}/.terraform/**
+
+validate:
+  stage: validate
+  script:
+    - cd "${TF_ROOT}"
+    - terraform validate
+
+
+terraform:plan:
+  stage: plan
+  script:
+    - cd "${TF_ROOT}"
+    - terraform plan -out "planfile"
+  dependencies:
+    - validate
+  artifacts:
+    paths:
+      - planfile
+
+terraform:deploy: &terraform_deploy
+  stage: deploy
+  script:
+    - echo "Start deploy script...."
+    - cd "${TF_ROOT}"
+    - terraform apply -input=false "planfile"
+#  rules:
+#    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+#      when: manual
+  allow_failure: true
+  dependencies:
+    - terraform:plan
+  artifacts:
+    when: always
+    paths:
+      - ${TF_ROOT}/terraform.tfstate
+  
+
+terraform:destroy: &terraform_destroy
+  stage: cleanup
+  script:
+    - cd "${TF_ROOT}"
+    - ls -ltr
+    - terraform destroy
+  when: manual
+  allow_failure: true
