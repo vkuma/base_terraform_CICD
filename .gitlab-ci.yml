@@ -1,126 +1,109 @@
-
-# You should not add this template to an existing `.gitlab-ci.yml` file by using the `include:` keyword.
-#
-# To contribute improvements to CI/CD templates, please follow the Development guide at:
-# https://docs.gitlab.com/ee/development/cicd/templates.html
-# This specific template is located at:
-# https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Bash.gitlab-ci.yml
-
-# See https://docs.gitlab.com/ee/ci/yaml/index.html for all available options
-
-# you can delete this line if you're not using Docker
+#Use the latest terraform image and set the Docker entrypoint. Entrypoint specifies the program that will be used in the Docker container.
+#Terraform image itself uses terraform binary as entrypoint, so you have to change it to what we have below.
 image:
-  name: hashicorp/terraform:light
+  name: hashicorp/terraform:latest
   entrypoint:
     - '/usr/bin/env'
     - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
-
-variables:
-  TF_ROOT: ${CI_PROJECT_DIR}  # The relative path to the root directory of the Terraform project
-
+#Cache the .terraform directory so it will be available in all job steps
 cache:
-  key: "${TF_ROOT}"
+  key: terraform
   paths:
-    - ${TF_ROOT}/.terraform/
+    - .terraform
 
-
+#Define the stages that will run in order
 stages:
-  - test
-  - build
-  - initialize
-  - validate
-  - plan
-  - deploy
-  - cleanup
+  - mvn-test
+  - mvn-build
+  - terraform-validate
+  - terraform-plan
+  - terraform-apply
+  - terraform-destroy
 
-before_script: 
+#Export AWS secrets. Not sure we really have to do this.
+#Did not include terraform init here, because didn't want that to run before the jobs in the mvn stages
+before_script:
   - echo "Executing before_script"
   - export AWS_ACCESS_KEY=${AWS_ACCESS_KEY_ID}
-  - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}  
-    
-after_script:
-  - echo "Executing after_script"
+  - export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
 
-build:
-  image: maven:3.8-openjdk-11
-  stage: build
-  script:
-      - mvn clean install -DskipTests=true
-  artifacts:
-    paths:
-      - target/*.jar
-
+#Only executes our HelloWorldControllerTest. We broke this out from the build step just to demonstrate having a test stage and also so we can force it to fail to demonstrate that the pipeline will stop on failure.
+#This step is not allowed to fail. If junit fails, we don't want to try and build the deployable
+#The target folder is persisted as an artifact. This folder contians test report.
 test1:
-  image: maven:3.8-openjdk-11  
-  stage: test
+  image: maven:3.8-openjdk-11
+  stage: mvn-test
   script:
-      - echo "This is an individual test that will also run in the build step. Only added to test stage for purposes of the class"
+      - echo "Just running our only junit here - to prove you can run multiple jobs in parallel in a single stage"
       - mvn test -Dtest=HelloWorldControllerTest
+  allow_failure: false      
   artifacts:
     paths:
       - target
 
+#Just adding another test job to demonstrate parallel execution of jobs in a given stage.
 test2:
-  image: maven:3.8-openjdk-11  
-  stage: test
+  image: maven:3.8-openjdk-11
+  stage: mvn-test
   script:
-    - echo "Do another parallel test here"
-    - echo "For example run a lint test"
+    - echo "Just spitting out text here. This job is just here to prove we can run two jobs in parallel in the mvn-test stage"
 
-initialize:
-  stage: initialize
+#This job builds the spring boot jar that we will be deploying to AWS.  We chose not to run the tests here, since they were run in the preceding test stage and this job won't be reached if they fail.
+build:
+  image: maven:3.8-openjdk-11
+  stage: mvn-build
   script:
-    - rm -rf .terraform
-    - terraform --version
-    - terraform init
+    - echo "Running mvn clean install and skipping tests - will create the spring boot jar deployable"
+    - mvn clean install -DskipTests=true
   artifacts:
-    when: always
     paths:
-      - .terraform.lock.hcl
-      - ${TF_ROOT}/.terraform/**
+      - target/*.jar
 
+
+#Validate the terraform syntax and inner references specified in the tf configuration file(s).
 validate:
-  stage: validate
+  stage: terraform-validate
   script:
-    - cd "${TF_ROOT}"
+    - echo "Validating syntax and inner references specified in the tf configuraiton"    
+    - terraform init
     - terraform validate
 
-
-terraform:plan:
-  stage: plan
+#Terraform will compare your tf configuration with the tf state and show you all the resources that need to be created, changed or destroyed.
+#Here we are specifying an 'out' option to save the generated plan as an artifact so it can be used in the terraform apply step.
+#If you run terraform plan without the optional 'out' then it will create a speculative plan, which is a description of the effect of the plan but without any intent to actually apply it.
+plan:
+  stage: terraform-plan
   script:
-    - cd "${TF_ROOT}"
-    - terraform plan -out "planfile"
-  dependencies:
-    - validate
+    - echo "Creating tf plan to be used in subsequent terraform apply job"
+    - terraform init
+    - terraform plan --out plan
   artifacts:
     paths:
-      - planfile
+      - plan
 
-terraform:deploy: &terraform_deploy
-  stage: deploy
+#Deploy the infrastructure using terraform apply, using the tf plan from the previous stage.
+#This will be a manual step, so we can verify the plan prior to applying the plan to the actual infrastructure.
+#The auto-approve parameter is necessary so a human doesn't have to type 'yes' to approve the plan
+#We save the tf state here as an artifact so it will be browsable from the gitlab UI and available for the destroy stage
+apply:
+  stage: terraform-apply
   script:
-    - echo "Start deploy script...."
-    - cd "${TF_ROOT}"
-    - terraform apply -input=false "planfile"
-#  rules:
-#    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-#      when: manual
-  allow_failure: true
-  dependencies:
-    - terraform:plan
-  artifacts:
-    when: always
-    paths:
-      - ${TF_ROOT}/terraform.tfstate
-  
-
-terraform:destroy: &terraform_destroy
-  stage: cleanup
-  script:
-    - cd "${TF_ROOT}"
-    - ls -ltr
-    - terraform destroy
+    - echo "Deploying resources using the tf plan"
+    - terraform init
+    - terraform apply --auto-approve plan
   when: manual
-  allow_failure: true
+  allow_failure: false
+  artifacts:
+    paths:
+      - terraform.tfstate
+  
+#Destroys the infrastructure created by our tf configuration.  This is a manual step for obvious reasons.
+#The auto-approve parameter is necessary so a human doesn't have to type 'yes' to approve the destroy
+destroy:
+  stage: terraform-destroy
+  script:
+    - echo "Destroying resources"
+    - terraform init    
+    - terraform destroy --auto-approve
+  when: manual
