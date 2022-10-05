@@ -6,7 +6,7 @@ image:
     - '/usr/bin/env'
     - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
-#Cache the .terraform directory so it will be available in all job steps
+#Cache the .terraform directory so it will be available in all job steps. 
 cache:
   key: terraform
   paths:
